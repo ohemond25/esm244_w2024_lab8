@@ -17,7 +17,7 @@ execute:
 library(tidyverse)
 library(here)
 
-library(ggfortify) # For PCA biplot
+library(ggfortify) # For PCA biplot (autoplot)
 
 ```
 
@@ -46,32 +46,40 @@ Here we are examining a selected set of variables:
 PCA requires continuous numeric data with no NAs.  So we must drop categorical and character data, and exclude any rows with NAs.  We should also rescale so all numeric variables have a mean 0 and sd 1.
 
 ```{r}
+# get data
 hdi_data_raw <- read_csv(here('data/hdi_clean.csv')) 
 
 # glimpse(hdi_data_raw)
 # summary(hdi_data_raw)
 
+# pivot data for plotting, get all dimensions into a column
 hdi_data_long <- hdi_data_raw %>%
-  pivot_longer(names_to = 'name', values_to = 'value', where(is.numeric))
+  pivot_longer(names_to = 'name', values_to = 'value', where(is.numeric)) # where() tells it to select all columns where the condition is true
 
+# plot
 ggplot(hdi_data_long, aes(x = value)) +
   geom_histogram() +
-  facet_wrap(~ name, scales = 'free_x')
+  facet_wrap(~ name, scales = 'free_x') # individual plot for each different variable
+# check if any data is highly skewed (could log transform those variables if needed to get them into a normal distribution)
 ```
 
 ```{r}
+# wrangle data
 hdi_data <- hdi_data_raw %>%
   drop_na() %>%
-  mutate(hdicode = factor(hdicode, levels = c('Low', 'Medium', 'High', 'Very High'))) %>%
+  mutate(hdicode = factor(hdicode, levels = c('Low', 'Medium', 'High', 'Very High'))) %>% # assigning development index levels to be in the order we want them for plotting
   ### why are we log transforming?  PCA does not require normality.  
   ### But see HDI description - they use log gnipc for their scoring.
-  mutate(gnipc_2021 = log(gnipc_2021))
+  mutate(gnipc_2021 = log(gnipc_2021)) # log reduces the range of the data to be more easily worked with
 
+# running pca using prcomp() function
+  # note: prcomp() can't handle missing values
 hdi_pca <- hdi_data %>% 
-  select(where(is.numeric)) %>%
+  select(where(is.numeric)) %>% # so that it's ready for pca (can only take numeric info)
   # select(-iso3, -country, -hdicode)) %>%
   # select(ends_with('2021'), lat) %>%
-  prcomp(scale = TRUE)
+  prcomp(scale = TRUE) # rescale all our data to have mean of 0, SD of 1, so that they are comparable
+str(hdi_pca)  
 ```
 
 Examine the structure of the hdi_pca object.
@@ -79,7 +87,7 @@ Examine the structure of the hdi_pca object.
 ```r
 List of 5
  $ sdev    : num [1:9] 2.506 0.965 0.84 0.607 0.507 ...
- $ rotation: num [1:9, 1:9] 0.368 0.35 0.35 0.354 -0.363 ...
+ $ rotation: num [1:9, 1:9] 0.368 0.35 0.35 0.354 -0.363 ... # how much of each variable is being used to construct PC (matrix)
   ..- attr(*, "dimnames")=List of 2
   .. ..$ : chr [1:9] "le_2021" "eys_2021" "mys_2021" "gnipc_2021" ...
   .. ..$ : chr [1:9] "PC1" "PC2" "PC3" "PC4" ...
@@ -103,6 +111,7 @@ List of 5
 
 ``` {r}
 # See the loadings (weighting for each principal component)
+# can see how variables convert to PCs and vice versa
 hdi_pca$rotation
 ```
 
@@ -113,9 +122,13 @@ What can we say about the contributions of these variables to PC1, PC2, and PC3?
 First let's plot the data in its raw form, choosing a couple of key variables.
 
 ```{r}
+# getting a sense of what our data looks like
+# first: gross national income per capita vs life expectancy
 ggplot() +
   geom_point(data = hdi_data, aes(x = gnipc_2021, y = le_2021, color = hdicode)) +
   theme_minimal()
+
+# second: expected years of schooling by mean years of school
 ggplot() +
   geom_point(data = hdi_data, aes(x = eys_2021, y = mys_2021, color = hdicode)) +
   theme_minimal()
@@ -124,33 +137,42 @@ ggplot() +
 Let's try this the hard way, to get an intuition about what is happening in the biplot.
 
 ```{r}
-# loadings_df <- data.frame(hdi_pca$rotation) %>%
+# hard way = by hand and plot via ggplot
+
+# make data frame. start with our rotation matrix from above
 loadings_df <- data.frame(hdi_pca$rotation * 8) %>% ### 8x multiplier is arbitrary, to extend the length of the arrows
-  mutate(axis = row.names(.))
+  mutate(axis = row.names(.)) # adds row names as a column
 
-new_pts_df <- data.frame(hdi_pca$x)
+new_pts_df <- data.frame(hdi_pca$x) # x value is all the original observations, but translated to our PCA coordinate system
+  # the x will be the points that we add to our PCA plot
+  # resulting df gives a variable column for each PC
 
+# plot
 ggplot() +
-  geom_point(data = new_pts_df, aes(x = PC1, y = PC2), 
+  geom_point(data = new_pts_df, aes(x = PC1, y = PC2), # axes are PC1 and PC2
              color = 'blue') +
   geom_segment(data = loadings_df,
-               x = 0, y = 0, aes(xend = PC1, yend = PC2, group = axis),
-               arrow = arrow(length = unit(.25, 'cm'))) +
+               x = 0, y = 0, # start segments at 0,0
+               aes(xend = PC1, yend = PC2, group = axis), # drawing line segments till the end at the respective PC1 and PC2 values
+               arrow = arrow(length = unit(.25, 'cm'))) + # put arrow on the end of our segments
   geom_text(data = loadings_df,
-            aes(x = PC1, y = PC2, label = axis), vjust = 0, nudge_y = .01) +
+            aes(x = PC1, y = PC2, label = axis), vjust = 0, nudge_y = .01) + # add labels of variable names to each arrow
   theme_minimal()
+
+## ggrepel can be used to help avoid overlap of labels
 ```
 
 and by autoplot
 
 ``` {r}
-autoplot(hdi_pca,
-     	data = hdi_data,
-     	loadings = TRUE,
-     	colour = 'hdicode',
-     	loadings.label = TRUE,
-     	loadings.colour = "black",
-     	loadings.label.colour = "black",
+# extra add ins from ggfortify package
+autoplot(hdi_pca, # give pca results
+     	data = hdi_data, # give it our raw data
+     	loadings = TRUE, # add arrows
+     	colour = 'hdicode', # color based on the hdi code levels
+     	loadings.label = TRUE, # label our arrows
+     	loadings.colour = "black", # make arrows black
+     	loadings.label.colour = "black", # make text black
      	loadings.label.vjust = -0.5
      	) +
   scale_color_manual(values = c('red', 'orange', 'yellowgreen', 'darkgreen')) +
@@ -163,19 +185,23 @@ autoplot(hdi_pca,
 
 first by hand, then by screeplot
 ```{r}
-sd_vec <- hdi_pca$sdev
+# create some vectors
+sd_vec <- hdi_pca$sdev # gives as a vector
 var_vec <- sd_vec^2 ### standard deviation is sqrt of variance!
 pc_names <- colnames(hdi_pca$rotation)
 
+# make data frame
 pct_expl_df <- data.frame(v = var_vec,
-                          pct_v = var_vec / sum(var_vec),
-                          pc = pc_names) %>%
-  mutate(pct_lbl = paste0(round(pct_v*100, 1), '%'))
+                          pct_v = var_vec / sum(var_vec), # var_vec is the variance explained by dif axes. this is variace of each component divided by total summed variance
+                          pc = pc_names) %>% # from our rotation matrix
+  mutate(pct_lbl = paste0(round(pct_v*100, 1), '%')) # turning percent into a nice looking text tabel
 
+# plot our data frame
 ggplot(pct_expl_df, aes(x = pc, y = v)) +
   geom_col() +
-  geom_text(aes(label = pct_lbl), vjust = 0, nudge_y = .002) +
+  geom_text(aes(label = pct_lbl), vjust = 0, nudge_y = .01) +
   labs(x = 'Principal component', y = 'Variance explained')
+# can see that the first PC explains a ton of the variance! the others are much less relevant
 ```
 
 ```{r}

@@ -1,0 +1,86 @@
+---
+title: "Lab 8 Postlab"
+author: "Olivia"
+format: 
+  html:
+    embed-resources: true
+    code-fold: true
+    toc: true
+execute:
+  warning: false
+  message: false
+---
+
+```{r}
+library(tidyverse)
+library(here)
+library(ggfortify)
+```
+
+```{r}
+# get data
+stream <- read_csv(here('data', 'stream_data_subset.csv'), na = c(-999, "NA"))
+
+# examine data
+summary(stream)
+```
+
+```{r}
+# pivot data
+stream_long <- stream %>% 
+  pivot_longer(names_to = 'variable', values_to = 'value', nh4_uM:tpp_uM) %>% 
+  mutate(log_value = log(value)) %>% # log transform them all since they're very skewed
+  drop_na()
+
+# histogram
+ggplot(data = stream_long, aes(x = log_value)) + 
+  geom_histogram() +
+  facet_wrap(~variable, scales = 'free')
+```
+
+```{r}
+# wrangle for pca
+stream_pre_pca <- stream %>% 
+  drop_na() %>% 
+  mutate(across(nh4_uM:tpp_uM, log))
+
+# run pca
+stream_pca <- stream_pre_pca %>% 
+  select(where(is.numeric)) %>% 
+  prcomp(scale = TRUE)
+```
+
+```{r}
+str(stream_pca)
+stream_pca$rotation
+```
+
+```{r}
+# biplot
+
+# first make data frame for arrows
+loadings_df <- data.frame(stream_pca$rotation * 8) %>% 
+  mutate(axis = row.names(.))
+
+# next make points data frame
+new_pts_df <- data.frame(stream_pca$x)
+
+# make our plot!
+ggplot() +
+  geom_point(data = new_pts_df,
+             aes(x = PC1, y = PC2),
+             color = "black") +
+  geom_segment(data = loadings_df,
+               x = 0, y = 0,
+               aes(xend = PC1, yend = PC2, group = axis),
+               arrow = arrow(length = unit(.25, 'cm'))) +
+  geom_text(data = loadings_df,
+            aes(x = PC1, y = PC2, label = axis), vjust = 0, position = "jitter") +
+  theme_minimal()
+```
+
+```{r}
+# screeplot
+screeplot(stream_pca, type = "barplot")
+```
+
